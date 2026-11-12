@@ -58,6 +58,11 @@ def load_rules(path: Path) -> dict:
 
 
 def check_survey(path: Path, rules: dict, *, summary: bool = False) -> dict:
+    with path.open(encoding="utf-8-sig", newline="") as stream:
+        return check_survey_stream(stream, rules, summary=summary)
+
+
+def check_survey_stream(stream, rules: dict, *, summary: bool = False) -> dict:
     required = rules["required"]
     duplicate_by = rules["duplicate_by"]
     ranges = rules["integer_ranges"]
@@ -80,61 +85,60 @@ def check_survey(path: Path, rules: dict, *, summary: bool = False) -> dict:
     checked = 0
     blanks = Counter()
     flag_counts = Counter()
-    with path.open(encoding="utf-8-sig", newline="") as stream:
-        reader = csv.reader(stream, strict=True)
-        headers = next(reader, [])
-        if not headers or any(not column.strip() for column in headers) or len(set(headers)) != len(headers):
-            raise ValueError("CSV needs unique, nonempty column headers")
-        missing = referenced.difference(headers)
-        if missing:
-            raise ValueError("CSV is missing configured columns: " + ", ".join(sorted(missing)))
+    reader = csv.reader(stream, strict=True)
+    headers = next(reader, [])
+    if not headers or any(not column.strip() for column in headers) or len(set(headers)) != len(headers):
+        raise ValueError("CSV needs unique, nonempty column headers")
+    missing = referenced.difference(headers)
+    if missing:
+        raise ValueError("CSV is missing configured columns: " + ", ".join(sorted(missing)))
 
-        while True:
-            line = reader.line_num + 1
-            cells = next(reader, None)
-            if cells is None:
-                break
-            checked += 1
-            if len(cells) != len(headers):
-                raise ValueError(f"CSV line {line}: expected {len(headers)} columns, found {len(cells)}")
-            row = dict(zip(headers, (cell.strip() for cell in cells)))
+    while True:
+        line = reader.line_num + 1
+        cells = next(reader, None)
+        if cells is None:
+            break
+        checked += 1
+        if len(cells) != len(headers):
+            raise ValueError(f"CSV line {line}: expected {len(headers)} columns, found {len(cells)}")
+        row = dict(zip(headers, (cell.strip() for cell in cells)))
+        if summary:
+            blanks.update(column for column, value in row.items() if not value)
+        flags = []
+        for column in required:
+            if not row[column]:
+                flags.append({"check": "required", "column": column})
+        for rule in ranges:
+            column = rule["column"]
+            value = row[column]
+            if not value:
+                continue
+            try:
+                number = int(value) if re.fullmatch(r"[+-]?[0-9]+", value) else None
+            except ValueError:
+                number = None
+            if number is None or not rule["min"] <= number <= rule["max"]:
+                flags.append({"check": "integer_range", **rule})
+        for rule in skip_rules:
+            column = rule["blank_column"]
+            if row[rule["when_column"]].casefold() == rule["equals"].strip().casefold() and row[column]:
+                flags.append({"check": "skip_logic", "column": column, "when_column": rule["when_column"]})
+        for rule in conditional:
+            column = rule["column"]
+            if row[rule["when_column"]].casefold() == rule["equals"].strip().casefold() and not row[column]:
+                flags.append({"check": "required_when", "column": column, "when_column": rule["when_column"]})
+        for column, values in allowed:
+            if row[column] and row[column].casefold() not in values:
+                flags.append({"check": "allowed_values", "column": column})
+        key = tuple(row[column] for column in duplicate_by)
+        if key and all(key):
+            first_line = seen.setdefault(key, line)
+            if first_line != line:
+                flags.append({"check": "possible_duplicate", "columns": duplicate_by, "first_line": first_line})
+        if flags:
+            flagged_rows.append({"line": line, "flags": flags})
             if summary:
-                blanks.update(column for column, value in row.items() if not value)
-            flags = []
-            for column in required:
-                if not row[column]:
-                    flags.append({"check": "required", "column": column})
-            for rule in ranges:
-                column = rule["column"]
-                value = row[column]
-                if not value:
-                    continue
-                try:
-                    number = int(value) if re.fullmatch(r"[+-]?[0-9]+", value) else None
-                except ValueError:
-                    number = None
-                if number is None or not rule["min"] <= number <= rule["max"]:
-                    flags.append({"check": "integer_range", **rule})
-            for rule in skip_rules:
-                column = rule["blank_column"]
-                if row[rule["when_column"]].casefold() == rule["equals"].strip().casefold() and row[column]:
-                    flags.append({"check": "skip_logic", "column": column, "when_column": rule["when_column"]})
-            for rule in conditional:
-                column = rule["column"]
-                if row[rule["when_column"]].casefold() == rule["equals"].strip().casefold() and not row[column]:
-                    flags.append({"check": "required_when", "column": column, "when_column": rule["when_column"]})
-            for column, values in allowed:
-                if row[column] and row[column].casefold() not in values:
-                    flags.append({"check": "allowed_values", "column": column})
-            key = tuple(row[column] for column in duplicate_by)
-            if key and all(key):
-                first_line = seen.setdefault(key, line)
-                if first_line != line:
-                    flags.append({"check": "possible_duplicate", "columns": duplicate_by, "first_line": first_line})
-            if flags:
-                flagged_rows.append({"line": line, "flags": flags})
-                if summary:
-                    flag_counts.update(flag["check"] for flag in flags)
+                flag_counts.update(flag["check"] for flag in flags)
 
     report = {"rows_checked": checked, "rows_flagged": len(flagged_rows), "flagged_rows": flagged_rows}
     if summary:

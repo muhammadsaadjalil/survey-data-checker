@@ -33,6 +33,30 @@ py -3 tools/survey_check.py examples/survey_sample.csv --rules examples/survey_r
 
 The summary adds answered counts, missing counts, and missing percentages for every column, plus counts by check type. Percentages use all data rows as the denominator, so they include blanks expected by skip logic. A header-only file has no percentage. A row can trigger several checks.
 
+## Apply review decisions and export for SPSS
+
+Use the review report to investigate each flag. Then prepare a separate decisions file from the same source CSV and rules.
+
+```powershell
+py -3 tools/survey_review.py prepare examples/survey_sample.csv --rules examples/survey_rules.json --output decisions.csv
+```
+
+The template lists each flagged source line once. Import the template into Excel with the columns treated as text to preserve exact replacement values such as IDs with leading zeros. Keep the headers, `source_sha256`, and `csv_line` intact.
+
+| Decision | What to enter |
+| --- | --- |
+| `keep` | A reason. Leave `column` and `replacement` blank. |
+| `correct` | The exact source column name, the replacement value, and a reason. A blank replacement clears the cell. Copy the template row to correct another column on the same source line. |
+| `exclude` | A reason. Leave `column` and `replacement` blank. The entire response is omitted from the reviewed copy. |
+
+Completely blank decision fields leave a response unchanged. Enter at least one decision before exporting. Save the edited file as a UTF-8 CSV.
+
+```powershell
+py -3 tools/survey_review.py apply examples/survey_sample.csv --decisions decisions.csv --output reviewed.csv --log review-log.json
+```
+
+The export checks the source fingerprint and rejects conflicting decisions. It creates two new files and preserves the source CSV. Import `reviewed.csv` into SPSS as UTF-8 with the first row as column headers, then assign variable types and missing-value settings as needed. The JSON log records actions, source line numbers, and reasons. Keep reasons free of respondent identifiers.
+
 ## Run the tests
 
 ## Export a review CSV
