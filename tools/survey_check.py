@@ -6,14 +6,15 @@ import csv
 import json
 import re
 import sys
+from collections import Counter
 from pathlib import Path
 
 
 def load_rules(path: Path) -> dict:
     rules = json.loads(path.read_text(encoding="utf-8-sig"))
-    sections = {"required", "duplicate_by", "integer_ranges", "skip"}
-    if not isinstance(rules, dict) or rules.keys() - sections:
-        raise ValueError("Rules must be an object with required, duplicate_by, integer_ranges, or skip")
+    sections = ("required", "duplicate_by", "integer_ranges", "skip", "required_when", "allowed_values")
+    if not isinstance(rules, dict) or rules.keys() - set(sections):
+        raise ValueError("Rules must be an object with these supported keys: " + ", ".join(sections))
     rules = {section: rules.get(section, []) for section in sections}
     for section, entries in rules.items():
         if not isinstance(entries, list):
@@ -37,24 +38,48 @@ def load_rules(path: Path) -> dict:
             or any(not isinstance(value, str) or not value.strip() for value in rule.values())
         ):
             raise ValueError("Each skip rule needs nonempty when_column, equals, and blank_column strings")
+    for rule in rules["required_when"]:
+        if (
+            not isinstance(rule, dict) or rule.keys() != {"when_column", "equals", "column"}
+            or any(not isinstance(value, str) or not value.strip() for value in rule.values())
+        ):
+            raise ValueError("Each required_when rule needs nonempty when_column, equals, and column strings")
+    for rule in rules["allowed_values"]:
+        if (
+            not isinstance(rule, dict) or rule.keys() != {"column", "values"}
+            or not isinstance(rule["column"], str) or not rule["column"].strip()
+            or not isinstance(rule["values"], list) or not rule["values"]
+            or any(not isinstance(value, str) or not value.strip() for value in rule["values"])
+        ):
+            raise ValueError("Each allowed_values rule needs a column and a nonempty list of answer strings")
     if not any(rules.values()):
         raise ValueError("Configure at least one survey check")
     return rules
 
 
-def check_survey(path: Path, rules: dict) -> dict:
+def check_survey(path: Path, rules: dict, *, summary: bool = False) -> dict:
     required = rules["required"]
     duplicate_by = rules["duplicate_by"]
     ranges = rules["integer_ranges"]
     skip_rules = rules["skip"]
+    conditional = rules.get("required_when", [])
+    allowed = [
+        (rule["column"], {value.strip().casefold() for value in rule["values"]})
+        for rule in rules.get("allowed_values", [])
+    ]
     referenced = set(required + duplicate_by)
     referenced.update(rule["column"] for rule in ranges)
     for rule in skip_rules:
         referenced.update((rule["when_column"], rule["blank_column"]))
+    for rule in conditional:
+        referenced.update((rule["when_column"], rule["column"]))
+    referenced.update(column for column, _ in allowed)
 
     flagged_rows = []
     seen = {}
     checked = 0
+    blanks = Counter()
+    flag_counts = Counter()
     with path.open(encoding="utf-8-sig", newline="") as stream:
         reader = csv.reader(stream, strict=True)
         headers = next(reader, [])
@@ -73,6 +98,8 @@ def check_survey(path: Path, rules: dict) -> dict:
             if len(cells) != len(headers):
                 raise ValueError(f"CSV line {line}: expected {len(headers)} columns, found {len(cells)}")
             row = dict(zip(headers, (cell.strip() for cell in cells)))
+            if summary:
+                blanks.update(column for column, value in row.items() if not value)
             flags = []
             for column in required:
                 if not row[column]:
@@ -92,6 +119,13 @@ def check_survey(path: Path, rules: dict) -> dict:
                 column = rule["blank_column"]
                 if row[rule["when_column"]].casefold() == rule["equals"].strip().casefold() and row[column]:
                     flags.append({"check": "skip_logic", "column": column, "when_column": rule["when_column"]})
+            for rule in conditional:
+                column = rule["column"]
+                if row[rule["when_column"]].casefold() == rule["equals"].strip().casefold() and not row[column]:
+                    flags.append({"check": "required_when", "column": column, "when_column": rule["when_column"]})
+            for column, values in allowed:
+                if row[column] and row[column].casefold() not in values:
+                    flags.append({"check": "allowed_values", "column": column})
             key = tuple(row[column] for column in duplicate_by)
             if key and all(key):
                 first_line = seen.setdefault(key, line)
@@ -99,17 +133,33 @@ def check_survey(path: Path, rules: dict) -> dict:
                     flags.append({"check": "possible_duplicate", "columns": duplicate_by, "first_line": first_line})
             if flags:
                 flagged_rows.append({"line": line, "flags": flags})
+                if summary:
+                    flag_counts.update(flag["check"] for flag in flags)
 
-    return {"rows_checked": checked, "rows_flagged": len(flagged_rows), "flagged_rows": flagged_rows}
+    report = {"rows_checked": checked, "rows_flagged": len(flagged_rows), "flagged_rows": flagged_rows}
+    if summary:
+        report["summary"] = {
+            "missing_by_column": {
+                column: {
+                    "missing": blanks[column],
+                    "answered": checked - blanks[column],
+                    "missing_percent": round(100 * blanks[column] / checked, 2) if checked else None,
+                }
+                for column in headers
+            },
+            "flags_by_check": dict(flag_counts),
+        }
+    return report
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("csv_file", type=Path, help="UTF-8 survey export")
     parser.add_argument("--rules", required=True, type=Path, help="JSON file containing survey rules")
+    parser.add_argument("--summary", action="store_true", help="Include missing-answer and flag counts")
     args = parser.parse_args()
     try:
-        result = check_survey(args.csv_file, load_rules(args.rules))
+        result = check_survey(args.csv_file, load_rules(args.rules), summary=args.summary)
     except (OSError, ValueError, csv.Error, RecursionError) as error:
         parser.exit(2, f"Survey check error: {error}\n")
     print(json.dumps(result, indent=2))

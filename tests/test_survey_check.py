@@ -12,9 +12,12 @@ RULES = ROOT / "examples" / "survey_rules.json"
 
 
 class SurveyCheckTests(unittest.TestCase):
-    def run_check(self, csv_file, rules=RULES):
+    def run_check(self, csv_file, rules=RULES, *, summary=False):
+        command = [sys.executable, str(SCRIPT), str(csv_file), "--rules", str(rules)]
+        if summary:
+            command.append("--summary")
         return subprocess.run(
-            [sys.executable, str(SCRIPT), str(csv_file), "--rules", str(rules)],
+            command,
             capture_output=True, encoding="utf-8", check=False,
         )
 
@@ -53,3 +56,30 @@ class SurveyCheckTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("missing configured columns", result.stderr)
         self.assertEqual(result.stdout, "")
+
+    def test_conditional_required_allowed_values_and_summary(self):
+        with tempfile.TemporaryDirectory() as directory:
+            sample = Path(directory) / "survey.csv"
+            sample.write_text(
+                "response_id,satisfaction,filed_complaint,complaint_outcome\n"
+                "S001,4, YES ,\nS002,3,Maybe,\nS003,5,no,\n",
+                encoding="utf-8",
+            )
+            result = self.run_check(sample, summary=True)
+        self.assertEqual(result.returncode, 1)
+        report = json.loads(result.stdout)
+        self.assertEqual(report["rows_flagged"], 2)
+        self.assertEqual(report["summary"]["flags_by_check"], {"required_when": 1, "allowed_values": 1})
+        self.assertEqual(
+            report["summary"]["missing_by_column"]["complaint_outcome"],
+            {"missing": 3, "answered": 0, "missing_percent": 100.0},
+        )
+        self.assertNotIn("Maybe", result.stdout)
+
+    def test_existing_rules_still_work(self):
+        with tempfile.TemporaryDirectory() as directory:
+            rules = Path(directory) / "rules.json"
+            rules.write_text('{"required": ["response_id"]}', encoding="utf-8")
+            result = self.run_check(ROOT / "examples" / "survey_sample.csv", rules)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), {"rows_checked": 4, "rows_flagged": 0, "flagged_rows": []})
