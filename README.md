@@ -35,6 +35,18 @@ The summary adds answered counts, missing counts, and missing percentages for ev
 
 ## Run the tests
 
+## Export a review CSV
+
+```powershell
+py -3 tools/survey_check.py examples/survey_sample.csv --rules examples/survey_rules.json --review-csv survey-review.csv
+```
+
+Open the report in Excel to review the flags. It has one row per flag with the physical CSV line number, the check name, and the affected column. It also includes range bounds, the trigger column, or the first matching line when applicable. The synthetic example produces four flags across two response rows. A clean export produces a report with only the header.
+
+Choose a new output filename each time. The command leaves existing files intact and still prints the regular JSON report. Exit code 1 means it found flags and generated the report.
+
+## Run the tests
+
 ```powershell
 py -3 -m unittest discover -s tests -v
 ```

@@ -152,14 +152,43 @@ def check_survey(path: Path, rules: dict, *, summary: bool = False) -> dict:
     return report
 
 
+def spreadsheet_text(value: str) -> str:
+    """Keep a survey column name from being interpreted as a formula."""
+    if value.lstrip().startswith(("=", "+", "-", "@", "＝", "＋", "－", "＠")) or value.startswith(("\t", "\r", "\n")):
+        return "'" + value
+    return value
+
+
+def write_review_csv(path: Path, report: dict) -> None:
+    """Create a UTF-8 CSV with one row per flag and no response values."""
+    with path.open("x", encoding="utf-8-sig", newline="") as stream:
+        writer = csv.writer(stream)
+        writer.writerow(("csv_line", "check", "column", "when_column", "first_matching_line", "min", "max"))
+        for row in report["flagged_rows"]:
+            for flag in row["flags"]:
+                column = flag["column"] if "column" in flag else ", ".join(flag["columns"])
+                writer.writerow((
+                    row["line"],
+                    flag["check"],
+                    spreadsheet_text(column),
+                    spreadsheet_text(flag.get("when_column", "")),
+                    flag.get("first_line", ""),
+                    flag.get("min", ""),
+                    flag.get("max", ""),
+                ))
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("csv_file", type=Path, help="UTF-8 survey export")
     parser.add_argument("--rules", required=True, type=Path, help="JSON file containing survey rules")
     parser.add_argument("--summary", action="store_true", help="Include missing-answer and flag counts")
+    parser.add_argument("--review-csv", type=Path, help="Create a new CSV with one row per flag")
     args = parser.parse_args()
     try:
         result = check_survey(args.csv_file, load_rules(args.rules), summary=args.summary)
+        if args.review_csv is not None:
+            write_review_csv(args.review_csv, result)
     except (OSError, ValueError, csv.Error, RecursionError) as error:
         parser.exit(2, f"Survey check error: {error}\n")
     print(json.dumps(result, indent=2))

@@ -1,3 +1,4 @@
+import csv
 import json
 import subprocess
 import sys
@@ -12,10 +13,12 @@ RULES = ROOT / "examples" / "survey_rules.json"
 
 
 class SurveyCheckTests(unittest.TestCase):
-    def run_check(self, csv_file, rules=RULES, *, summary=False):
+    def run_check(self, csv_file, rules=RULES, *, summary=False, review_csv=None):
         command = [sys.executable, str(SCRIPT), str(csv_file), "--rules", str(rules)]
         if summary:
             command.append("--summary")
+        if review_csv is not None:
+            command.extend(("--review-csv", str(review_csv)))
         return subprocess.run(
             command,
             capture_output=True, encoding="utf-8", check=False,
@@ -83,3 +86,34 @@ class SurveyCheckTests(unittest.TestCase):
             result = self.run_check(ROOT / "examples" / "survey_sample.csv", rules)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout), {"rows_checked": 4, "rows_flagged": 0, "flagged_rows": []})
+
+    def test_review_csv_exports_each_flag_with_context(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "review.csv"
+            result = self.run_check(ROOT / "examples" / "survey_sample.csv", review_csv=output)
+            self.assertEqual(result.returncode, 1, result.stderr)
+            with output.open(encoding="utf-8-sig", newline="") as stream:
+                rows = list(csv.DictReader(stream))
+        self.assertEqual([row["csv_line"] for row in rows], ["3", "3", "4", "4"])
+        self.assertEqual([row["check"] for row in rows], ["integer_range", "skip_logic", "required", "possible_duplicate"])
+        self.assertEqual((rows[0]["min"], rows[0]["max"]), ("1", "5"))
+        self.assertEqual(rows[1]["when_column"], "filed_complaint")
+        self.assertEqual(rows[3]["first_matching_line"], "2")
+        self.assertNotIn("S001", repr(rows))
+
+    def test_review_csv_protects_existing_files_and_spreadsheet_text(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            sample = root / "survey.csv"
+            original = "=header,answer\n,\n"
+            sample.write_bytes(original.encode("utf-8"))
+            rules = root / "rules.json"
+            rules.write_text('{"required": ["=header"]}', encoding="utf-8")
+            result = self.run_check(sample, rules, review_csv=sample)
+            self.assertEqual(result.returncode, 2)
+            self.assertEqual(sample.read_bytes(), original.encode("utf-8"))
+            output = root / "review.csv"
+            result = self.run_check(sample, rules, review_csv=output)
+            self.assertEqual(result.returncode, 1, result.stderr)
+            with output.open(encoding="utf-8-sig", newline="") as stream:
+                self.assertEqual(next(csv.DictReader(stream))["column"], "'=header")
