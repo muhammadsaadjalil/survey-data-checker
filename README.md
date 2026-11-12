@@ -57,6 +57,31 @@ py -3 tools/survey_review.py apply examples/survey_sample.csv --decisions decisi
 
 The export checks the source fingerprint and rejects conflicting decisions. It creates two new files and preserves the source CSV. Import `reviewed.csv` into SPSS as UTF-8 with the first row as column headers, then assign variable types and missing-value settings as needed. The JSON log records actions, source line numbers, and reasons. Keep reasons free of respondent identifiers.
 
+## Generate SPSS import syntax
+
+Copy [the synthetic codebook](examples/survey_codebook.json) and use your exact CSV headers as its keys. Give each column a unique SPSS variable name and a type. The generator uses the column order from your CSV.
+
+| Codebook field | What it controls |
+| --- | --- |
+| `name`, `type` | SPSS variable name and either `numeric` or `string` |
+| `width` | Required maximum UTF-8 byte width for a string |
+| `decimals` | Optional number of display decimals for numeric variables |
+| `label` | Question or variable label |
+| `value_labels` | Mapping of response codes to display labels |
+| `missing_values` | Up to three explicit user-missing codes per variable |
+
+Try the generator on the synthetic survey before using it on your reviewed export.
+
+```powershell
+py -3 tools/survey_spss.py examples/survey_sample.csv --codebook examples/survey_codebook.json --output sample-import.sps
+```
+
+For your reviewed data, replace the sample CSV and codebook paths with your own. Open the resulting `.sps` in IBM SPSS Statistics and run it to load the data and apply the metadata. The syntax uses the CSV's absolute path. Regenerate it if you move the CSV. The command refuses to overwrite an existing output file.
+
+Use a UTF-8 comma-separated file with a header and one physical line per response. The generator reports incompatible numeric fields, over-width text, or embedded line breaks before writing syntax. Numeric fields use dot decimals. A numeric blank is left empty for SPSS to interpret as system-missing. Explicit missing codes come from the codebook. This step validates import compatibility. Run the survey checks separately to flag issues such as ratings outside the questionnaire scale.
+
+See IBM's [GET DATA reference](https://www.ibm.com/docs/en/spss-statistics/32.0.0?topic=data-subcommands-typetxt-get-command) for the import syntax.
+
 ## Run the tests
 
 ## Export a review CSV

@@ -1,0 +1,18 @@
+{
+  "response_id": {"name": "response_id", "type": "string", "width": 16, "label": "Response identifier"},
+  "satisfaction": {
+    "name": "satisfaction",
+    "type": "numeric",
+    "label": "Overall satisfaction",
+    "value_labels": {"1": "Very dissatisfied", "2": "Dissatisfied", "3": "Neutral", "4": "Satisfied", "5": "Very satisfied", "99": "No response"},
+    "missing_values": [99]
+  },
+  "filed_complaint": {
+    "name": "filed_complaint",
+    "type": "string",
+    "width": 8,
+    "label": "Did the respondent file a complaint?",
+    "value_labels": {"Yes": "Filed a complaint", "No": "Did not file a complaint"}
+  },
+  "complaint_outcome": {"name": "complaint_outcome", "type": "string", "width": 40, "label": "Complaint outcome"}
+}
