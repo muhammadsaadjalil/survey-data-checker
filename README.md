@@ -1,18 +1,20 @@
 # Survey Data Checker
 
-Check a UTF-8 CSV before importing survey data into SPSS or another analysis tool. Requires Python 3.10 or later and uses the standard library.
+Check a survey CSV, review flagged responses, export a separate analysis copy, and generate an IBM SPSS Statistics import script. The tools run locally and require Python 3.10 or later.
 
-## Run the example
+## 1. Get the project and check Python
+
+Download the repository using **Code → Download ZIP** and extract it, or clone it with Git. Open PowerShell in the extracted or cloned folder. It should contain `tools/` and `examples/`.
 
 ```powershell
-py -3 tools/survey_check.py examples/survey_sample.csv --rules examples/survey_rules.json
+py -3 --version
 ```
 
-On Linux or macOS, replace `py -3` with `python3`. The synthetic example checks four rows and flags two. The report lists CSV line numbers and checks without including respondent values. To save the report, redirect output to a new file such as `survey-review.json`.
+If the Windows launcher is unavailable, try `python --version` and use `python` in the commands below. On Linux or macOS, use `python3` instead of `py -3`. The tools use the Python standard library.
 
-## Set up your own rules
+## 2. Prepare your survey CSV and rules
 
-Copy `examples/survey_rules.json` and replace the column names with the exact headers from your export.
+Start with the [synthetic survey](examples/survey_sample.csv) and [example rules](examples/survey_rules.json). For your own survey, export a UTF-8 comma-separated CSV with a header row. Copy the rules file and use your CSV's exact header names. Keep real survey exports, decisions, and outputs outside the repository.
 
 | Rule | What it flags |
 | --- | --- |
@@ -23,41 +25,54 @@ Copy `examples/survey_rules.json` and replace the column names with the exact he
 | `required_when` | A blank `column` when the answer in `when_column` matches `equals` |
 | `allowed_values` | Nonblank answers outside the configured `values` for a column |
 
-Checks trim surrounding whitespace. Skip, conditional-required, and allowed-value comparisons are case-insensitive. Review the flags before editing your analysis copy. The tool does not modify the source CSV. Exit codes are 0 for no flags, 1 for flags found, and 2 for input or rule errors.
+Checks trim surrounding whitespace. Skip, conditional-required, and allowed-value comparisons are case-insensitive. Review the flags before editing your analysis copy. The tool does not modify the source CSV.
 
-## Summarize missing answers
+## 3. Check the data and export a review report
 
 ```powershell
-py -3 tools/survey_check.py examples/survey_sample.csv --rules examples/survey_rules.json --summary
+py -3 tools/survey_check.py examples/survey_sample.csv --rules examples/survey_rules.json --summary --review-csv survey-review.csv
 ```
 
-The summary adds answered counts, missing counts, and missing percentages for every column, plus counts by check type. Percentages use all data rows as the denominator, so they include blanks expected by skip logic. A header-only file has no percentage. A row can trigger several checks.
+The example checks **four responses** and produces **four flags across two responses**. Open `survey-review.csv` in Excel. It contains one row per flag, with the physical CSV line number, affected column, and check. It omits response values. A clean export produces a report with only the header.
 
-## Apply review decisions and export for SPSS
+The command also prints JSON. With `--summary`, it includes answered and missing counts by column, missing percentages, and counts by check. Missing percentages use all response rows, including blanks expected by skip logic. Exit code `0` means no flags, `1` means flags were found and the report was generated, and `2` means an input or output error. Use a new filename for each report.
 
-Use the review report to investigate each flag. Then prepare a separate decisions file from the same source CSV and rules.
+## 4. Prepare and record your review decisions
+
+Investigate each flag against the source and your questionnaire. If no changes are needed, you can go straight to step 6 with your source CSV.
 
 ```powershell
 py -3 tools/survey_review.py prepare examples/survey_sample.csv --rules examples/survey_rules.json --output decisions.csv
 ```
 
-The template lists each flagged source line once. Import the template into Excel with the columns treated as text to preserve exact replacement values such as IDs with leading zeros. Keep the headers, `source_sha256`, and `csv_line` intact.
+Import `decisions.csv` into Excel with all columns treated as text so values such as IDs with leading zeros are preserved. Keep the header row, `source_sha256`, and `csv_line` intact.
 
 | Decision | What to enter |
 | --- | --- |
 | `keep` | A reason. Leave `column` and `replacement` blank. |
-| `correct` | The exact source column name, the replacement value, and a reason. A blank replacement clears the cell. Copy the template row to correct another column on the same source line. |
-| `exclude` | A reason. Leave `column` and `replacement` blank. The entire response is omitted from the reviewed copy. |
+| `correct` | The exact CSV column name, a replacement, and a reason. Leave `replacement` blank to clear a cell. Duplicate the template row to correct another field on the same source line. |
+| `exclude` | A reason. Leave `column` and `replacement` blank. This omits the entire response from the reviewed copy. |
 
-Completely blank decision fields leave a response unchanged. Enter at least one decision before exporting. Save the edited file as a UTF-8 CSV.
+To practice on the synthetic data, enter these example decisions. Keep the fingerprint already filled in by the template. The correction to `5` assumes the original answer was independently verified for this exercise.
+
+| csv_line | decision | column | replacement | reason |
+| --- | --- | --- | --- | --- |
+| 3 | correct | satisfaction | 5 | Verified rating for this example |
+| 3 | correct | complaint_outcome | | Follow-up does not apply |
+| 4 | exclude | | | Confirmed duplicate for this example |
+
+Save the edited template as a UTF-8 CSV. Blank decision fields leave that response unchanged. Enter at least one decision to create a reviewed export.
+
+## 5. Export the reviewed CSV and verify it
 
 ```powershell
 py -3 tools/survey_review.py apply examples/survey_sample.csv --decisions decisions.csv --output reviewed.csv --log review-log.json
+py -3 tools/survey_check.py reviewed.csv --rules examples/survey_rules.json --summary
 ```
 
-The export checks the source fingerprint and rejects conflicting decisions. It creates two new files and preserves the source CSV. Import `reviewed.csv` into SPSS as UTF-8 with the first row as column headers, then assign variable types and missing-value settings as needed. The JSON log records actions, source line numbers, and reasons. Keep reasons free of respondent identifiers.
+The tool checks the source fingerprint and rejects conflicting decisions. Keep the original CSV unchanged and choose unused output filenames. The example should produce **three responses and no remaining flags**. The JSON log records each decision, its original source line number, and its reason. Keep reasons free of respondent identifiers.
 
-## Generate SPSS import syntax
+## 6. Set up your SPSS codebook and generate syntax
 
 Copy [the synthetic codebook](examples/survey_codebook.json) and use your exact CSV headers as its keys. Give each column a unique SPSS variable name and a type. The generator uses the column order from your CSV.
 
@@ -70,29 +85,20 @@ Copy [the synthetic codebook](examples/survey_codebook.json) and use your exact 
 | `value_labels` | Mapping of response codes to display labels |
 | `missing_values` | Up to three explicit user-missing codes per variable |
 
-Try the generator on the synthetic survey before using it on your reviewed export.
-
 ```powershell
-py -3 tools/survey_spss.py examples/survey_sample.csv --codebook examples/survey_codebook.json --output sample-import.sps
+py -3 tools/survey_spss.py reviewed.csv --codebook examples/survey_codebook.json --output survey-import.sps
 ```
 
-For your reviewed data, replace the sample CSV and codebook paths with your own. Open the resulting `.sps` in IBM SPSS Statistics and run it to load the data and apply the metadata. The syntax uses the CSV's absolute path. Regenerate it if you move the CSV. The command refuses to overwrite an existing output file.
+If you skipped review and export, use the original CSV path in place of `reviewed.csv`. For real data, replace the synthetic codebook with your own. The generator checks numeric values, text widths, and that each response fits on one physical CSV line. Use dot decimals. Blank numeric cells are imported as system-missing, and explicit user-missing codes come from the codebook. The syntax uses the CSV's absolute path, so regenerate it if you move the CSV.
 
-Use a UTF-8 comma-separated file with a header and one physical line per response. The generator reports incompatible numeric fields, over-width text, or embedded line breaks before writing syntax. Numeric fields use dot decimals. A numeric blank is left empty for SPSS to interpret as system-missing. Explicit missing codes come from the codebook. This step validates import compatibility. Run the survey checks separately to flag issues such as ratings outside the questionnaire scale.
+## 7. Run the syntax in IBM SPSS Statistics
 
-See IBM's [GET DATA reference](https://www.ibm.com/docs/en/spss-statistics/32.0.0?topic=data-subcommands-typetxt-get-command) for the import syntax.
+1. Open `survey-import.sps` in the SPSS Syntax Editor and choose **Run → All**.
+2. In Data View, confirm the case count. The worked example should have three cases.
+3. In Variable View, confirm the names, types, question labels, response labels, and missing codes. The example defines satisfaction code `99` as user-missing.
+4. Save the SPSS dataset as a separate `.sav` file if needed.
 
-## Run the tests
-
-## Export a review CSV
-
-```powershell
-py -3 tools/survey_check.py examples/survey_sample.csv --rules examples/survey_rules.json --review-csv survey-review.csv
-```
-
-Open the report in Excel to review the flags. It has one row per flag with the physical CSV line number, the check name, and the affected column. It also includes range bounds, the trigger column, or the first matching line when applicable. The synthetic example produces four flags across two response rows. A clean export produces a report with only the header.
-
-Choose a new output filename each time. The command leaves existing files intact and still prints the regular JSON report. Exit code 1 means it found flags and generated the report.
+See the [IBM GET DATA reference](https://www.ibm.com/docs/en/spss-statistics/32.0.0?topic=data-subcommands-typetxt-get-command).
 
 ## Run the tests
 
