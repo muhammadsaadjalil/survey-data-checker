@@ -1,0 +1,5 @@
+response_id,satisfaction,filed_complaint,complaint_outcome
+S001,4,Yes,Resolved
+S002,7,No,Pending
+S001,,No,
+S004,3,No,

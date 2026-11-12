@@ -1,0 +1,6 @@
+{
+  "required": ["response_id", "satisfaction"],
+  "duplicate_by": ["response_id"],
+  "integer_ranges": [{"column": "satisfaction", "min": 1, "max": 5}],
+  "skip": [{"when_column": "filed_complaint", "equals": "No", "blank_column": "complaint_outcome"}]
+}
